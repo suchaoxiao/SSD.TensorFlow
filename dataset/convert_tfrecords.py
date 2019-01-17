@@ -43,13 +43,13 @@ import dataset_common
        |    |->Annotations/
        |    |->...
 '''
-tf.app.flags.DEFINE_string('dataset_directory', '/media/rs/7A0EE8880EE83EAF/Detections/PASCAL/VOC',
+tf.app.flags.DEFINE_string('dataset_directory', r'D:\datasets\VOCdevkit',
                            'All datas directory')
 tf.app.flags.DEFINE_string('train_splits', 'VOC2007, VOC2012',
                            'Comma-separated list of the training data sub-directory')
-tf.app.flags.DEFINE_string('validation_splits', 'VOC2007TEST',
+tf.app.flags.DEFINE_string('validation_splits', 'VOC2007',
                            'Comma-separated list of the validation data sub-directory')
-tf.app.flags.DEFINE_string('output_directory', '/media/rs/7A0EE8880EE83EAF/Detections/SSD/dataset/tfrecords',
+tf.app.flags.DEFINE_string('output_directory', r'C:\Users\DD\PycharmProject\SSD.TensorFlow\dataset\tfrecords',
                            'Output data directory')
 tf.app.flags.DEFINE_integer('train_shards', 16,
                             'Number of shards in training TFRecord files.')
