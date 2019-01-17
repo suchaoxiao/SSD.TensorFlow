@@ -66,12 +66,12 @@ class ReLuLayer(tf.layers.Layer):
 
     def compute_output_shape(self, input_shape):
         return tf.TensorShape(input_shape)
-
-def forward_module(m, inputs, training=False):
+#定义前向传导模块
+def forward_module(m, inputs, training=False):  #m是模块函数。conv bn relu 等这样的操作
     if isinstance(m, tf.layers.BatchNormalization) or isinstance(m, tf.layers.Dropout):
         return m.apply(inputs, training=training)
     return m.apply(inputs)
-
+#定义vgg16 的backbone 网络
 class VGG16Backbone(object):
     def __init__(self, data_format='channels_first'):
         super(VGG16Backbone, self).__init__()
@@ -81,7 +81,9 @@ class VGG16Backbone(object):
         self._conv_initializer = tf.glorot_uniform_initializer
         self._conv_bn_initializer = tf.glorot_uniform_initializer#lambda : tf.truncated_normal_initializer(mean=0.0, stddev=0.005)
         # VGG layers
+        # convblock（  num_blocks, filters, kernel_size, strides, name）
         self._conv1_block = self.conv_block(2, 64, 3, (1, 1), 'conv1')
+        #maxpool（pool_size, strides,padding）
         self._pool1 = tf.layers.MaxPooling2D(2, 2, padding='same', data_format=self._data_format, name='pool1')
         self._conv2_block = self.conv_block(2, 128, 3, (1, 1), 'conv2')
         self._pool2 = tf.layers.MaxPooling2D(2, 2, padding='same', data_format=self._data_format, name='pool2')
@@ -91,30 +93,34 @@ class VGG16Backbone(object):
         self._pool4 = tf.layers.MaxPooling2D(2, 2, padding='same', data_format=self._data_format, name='pool4')
         self._conv5_block = self.conv_block(3, 512, 3, (1, 1), 'conv5')
         self._pool5 = tf.layers.MaxPooling2D(3, 1, padding='same', data_format=self._data_format, name='pool5')
+        #从conv6这一层加入了dilation rate，增大感受野
         self._conv6 = tf.layers.Conv2D(filters=1024, kernel_size=3, strides=1, padding='same', dilation_rate=6,
                             data_format=self._data_format, activation=tf.nn.relu, use_bias=True,
                             kernel_initializer=self._conv_initializer(),
                             bias_initializer=tf.zeros_initializer(),
                             name='fc6', _scope='fc6', _reuse=None)
+        # conv7用的时1*1的卷积核
         self._conv7 = tf.layers.Conv2D(filters=1024, kernel_size=1, strides=1, padding='same',
                             data_format=self._data_format, activation=tf.nn.relu, use_bias=True,
                             kernel_initializer=self._conv_initializer(),
                             bias_initializer=tf.zeros_initializer(),
                             name='fc7', _scope='fc7', _reuse=None)
-        # SSD layers
+        # SSD layers   在vgg16 backbone 基础上增加ssd 头部，
         with tf.variable_scope('additional_layers') as scope:
+            #filters, strides, name, padding='same'
             self._conv8_block = self.ssd_conv_block(256, 2, 'conv8')
             self._conv9_block = self.ssd_conv_block(128, 2, 'conv9')
             self._conv10_block = self.ssd_conv_block(128, 1, 'conv10', padding='valid')
             self._conv11_block = self.ssd_conv_block(128, 1, 'conv11', padding='valid')
-
+    #定义L2正则化函数  L2范数是指向量各元素的平方和再开根号
     def l2_normalize(self, x, name):
         with tf.name_scope(name, "l2_normalize", [x]) as name:
             axis = -1 if self._data_format == 'channels_last' else 1
+            #square（）取平方，reducesum（） 给定维度上求和
             square_sum = tf.reduce_sum(tf.square(x), axis, keep_dims=True)
-            x_inv_norm = tf.rsqrt(tf.maximum(square_sum, 1e-10))
-            return tf.multiply(x, x_inv_norm, name=name)
-
+            x_inv_norm = tf.rsqrt(tf.maximum(square_sum, 1e-10))  #rsqrt求平方根
+            return tf.multiply(x, x_inv_norm, name=name)  #最后返回的时x和开根号的平方和的积
+    #定义前向传导网络
     def forward(self, inputs, training=False):
         # inputs should in BGR
         feature_layers = []
@@ -130,14 +136,14 @@ class VGG16Backbone(object):
         inputs = self._pool3.apply(inputs)
         for conv in self._conv4_block:
             inputs = forward_module(conv, inputs, training=training)
-        # conv4_3
+        # conv4_3  这个层产生的featuremap是用来做detection的
         with tf.variable_scope('conv4_3_scale') as scope:
             weight_scale = tf.Variable([20.] * 512, trainable=training, name='weights')
             if self._data_format == 'channels_last':
                 weight_scale = tf.reshape(weight_scale, [1, 1, 1, -1], name='reshape')
             else:
                 weight_scale = tf.reshape(weight_scale, [1, -1, 1, 1], name='reshape')
-
+            # feature layer是 w*input的结果
             feature_layers.append(tf.multiply(weight_scale, self.l2_normalize(inputs, name='norm'), name='rescale')
                                 )
         inputs = self._pool4.apply(inputs)
@@ -149,7 +155,7 @@ class VGG16Backbone(object):
         inputs = self._conv7.apply(inputs)
         # fc7
         feature_layers.append(inputs)
-        # forward ssd layers
+        # forward ssd layers  前传ssd层
         for layer in self._conv8_block:
             inputs = forward_module(layer, inputs, training=training)
         # conv8
@@ -233,7 +239,7 @@ class VGG16Backbone(object):
                     ReLuLayer('{}_relu2'.format(name), _scope='{}_relu2'.format(name), _reuse=None)
                 )
             return conv_bn_blocks
-
+#定义预测器头部 是两个卷积，一个生成anchor数*4的坐标，一个生成anchor数*class的类别信息
 def multibox_head(feature_layers, num_classes, num_anchors_depth_per_layer, data_format='channels_first'):
     with tf.variable_scope('multibox_head'):
         cls_preds = []
