@@ -18,12 +18,12 @@ import tensorflow as tf
 import numpy as np
 
 from tensorflow.contrib.image.python.ops import image_ops
-
+#计算面积
 def areas(gt_bboxes):
     with tf.name_scope('bboxes_areas', [gt_bboxes]):
         ymin, xmin, ymax, xmax = tf.split(gt_bboxes, 4, axis=1)
         return (xmax - xmin) * (ymax - ymin)
-
+#计算交叠面积
 def intersection(gt_bboxes, default_bboxes):
     with tf.name_scope('bboxes_intersection', [gt_bboxes, default_bboxes]):
         # num_anchors x 1
@@ -39,31 +39,35 @@ def intersection(gt_bboxes, default_bboxes):
         w = tf.maximum(int_xmax - int_xmin, 0.)
 
         return h * w
+#定义iou矩阵
 def iou_matrix(gt_bboxes, default_bboxes):
     with tf.name_scope('iou_matrix', [gt_bboxes, default_bboxes]):
         inter_vol = intersection(gt_bboxes, default_bboxes)
         # broadcast
         union_vol = areas(gt_bboxes) + tf.transpose(areas(default_bboxes), perm=[1, 0]) - inter_vol
-
+        #返回交并比iou'，如果并集为0就返回0 ，否则返回交并比
         return tf.where(tf.equal(union_vol, 0.0),
                         tf.zeros_like(inter_vol), tf.truediv(inter_vol, union_vol))
-
+#定义匹配函数
 def do_dual_max_match(overlap_matrix, low_thres, high_thres, ignore_between=True, gt_max_first=True):
     '''
     overlap_matrix: num_gt * num_anchors
     '''
     with tf.name_scope('dual_max_match', [overlap_matrix]):
         # first match from anchors' side
-        anchors_to_gt = tf.argmax(overlap_matrix, axis=0)
+        anchors_to_gt = tf.argmax(overlap_matrix, axis=0) #找最符合gtbox 的anchor，返回序号
         # the matching degree
-        match_values = tf.reduce_max(overlap_matrix, axis=0)
+        match_values = tf.reduce_max(overlap_matrix, axis=0) #找到匹配gtbox 的anchor的得分
 
         #positive_mask = tf.greater(match_values, high_thres)
-        less_mask = tf.less(match_values, low_thres)
+        less_mask = tf.less(match_values, low_thres) #找到得分比最小阈值海啸的anchor 设置ture
+        #下面是找到anchor得分介于最大于最小之间的anchor
         between_mask = tf.logical_and(tf.less(match_values, high_thres), tf.greater_equal(match_values, low_thres))
+        #负anchor 选择忽略介于中间的就选 低于的，否则选介于中间的
         negative_mask = less_mask if ignore_between else between_mask
         ignore_mask = between_mask if ignore_between else less_mask
-        # fill all negative positions with -1, all ignore positions is -2
+        # fill all negative positions with -1, all ignore positions is -2‘
+        #在负anchor位置设置-1，忽略的anchor 设为-2
         match_indices = tf.where(negative_mask, -1 * tf.ones_like(anchors_to_gt), anchors_to_gt)
         match_indices = tf.where(ignore_mask, -2 * tf.ones_like(match_indices), match_indices)
 
@@ -71,11 +75,11 @@ def do_dual_max_match(overlap_matrix, low_thres, high_thres, ignore_between=True
         # so all positive match positions in anchors_to_gt_mask is 1, all others are 0
         anchors_to_gt_mask = tf.one_hot(tf.clip_by_value(match_indices, -1, tf.cast(tf.shape(overlap_matrix)[0], tf.int64)),
                                         tf.shape(overlap_matrix)[0], on_value=1, off_value=0, axis=0, dtype=tf.int32)
-        # match from ground truth's side
+        # match from ground truth's side  找到每个anchor 最匹配的gtbox
         gt_to_anchors = tf.argmax(overlap_matrix, axis=1)
 
         if gt_max_first:
-            # the max match from ground truth's side has higher priority
+            # the max match from ground truth's side has higher priority#先找每个anchor最匹配的gtbox
             left_gt_to_anchors_mask = tf.one_hot(gt_to_anchors, tf.shape(overlap_matrix)[1], on_value=1, off_value=0, axis=1, dtype=tf.int32)
         else:
             # the max match from anchors' side has higher priority
@@ -84,7 +88,8 @@ def do_dual_max_match(overlap_matrix, low_thres, high_thres, ignore_between=True
                                                             tf.one_hot(gt_to_anchors, tf.shape(overlap_matrix)[1],
                                                                         on_value=True, off_value=False, axis=1, dtype=tf.bool)
                                                             ), tf.int64)
-        # can not use left_gt_to_anchors_mask here, because there are many ground truthes match to one anchor, we should pick the highest one even when we are merging matching from ground truth side
+        # can not use left_gt_to_anchors_mask here, because there are many ground truthes match to one anchor,
+        # we should pick the highest one even when we are merging matching from ground truth side
         left_gt_to_anchors_scores = overlap_matrix * tf.to_float(left_gt_to_anchors_mask)
         # merge matching results from ground truth's side with the original matching results from anchors' side
         # then select all the overlap score of those matching pairs
@@ -106,7 +111,7 @@ def do_dual_max_match(overlap_matrix, low_thres, high_thres, ignore_between=True
 #     np.save('./debug/labels_{}.npy'.format(save_image_with_bbox.counter), np.copy(labels))
 #     np.save('./debug/anchors_{}.npy'.format(save_image_with_bbox.counter), np.copy(anchors_point))
 #     return save_image_with_bbox.counter
-
+#定义anchor 编码函数
 class AnchorEncoder(object):
     def __init__(self, allowed_borders, positive_threshold, ignore_threshold, prior_scaling, clip=False):
         super(AnchorEncoder, self).__init__()
@@ -116,14 +121,14 @@ class AnchorEncoder(object):
         self._ignore_threshold = ignore_threshold
         self._prior_scaling = prior_scaling
         self._clip = clip
-
+    #定义中心点转左上右下坐标
     def center2point(self, center_y, center_x, height, width):
         return center_y - height / 2., center_x - width / 2., center_y + height / 2., center_x + width / 2.,
-
+    #左上右下转中心
     def point2center(self, ymin, xmin, ymax, xmax):
         height, width = (ymax - ymin), (xmax - xmin)
         return ymin + height / 2., xmin + width / 2., height, width
-
+    #定义对所有anchor进行编码函数
     def encode_all_anchors(self, labels, bboxes, all_anchors, all_num_anchors_depth, all_num_anchors_spatial, debug=False):
         # y, x, h, w are all in range [0, 1] relative to the original image size
         # shape info:
@@ -275,8 +280,8 @@ class AnchorCreator(object):
         self._extra_anchor_scales = extra_anchor_scales
         self._anchor_ratios = anchor_ratios
         self._layer_steps = layer_steps
-        self._anchor_offset = [0.5] * len(self._layers_shapes)
-
+        self._anchor_offset = [0.5] * len(self._layers_shapes) #初始化offset
+    #定义获得anchor的方法
     def get_layer_anchors(self, layer_shape, anchor_scale, extra_anchor_scale, anchor_ratio, layer_step, offset = 0.5):
         ''' assume layer_shape[0] = 6, layer_shape[1] = 5
         x_on_layer = [[0, 1, 2, 3, 4],
@@ -294,11 +299,12 @@ class AnchorCreator(object):
         '''
         with tf.name_scope('get_layer_anchors'):
             x_on_layer, y_on_layer = tf.meshgrid(tf.range(layer_shape[1]), tf.range(layer_shape[0]))
-
+            #计算坐标在图片中的位置
             y_on_image = (tf.cast(y_on_layer, tf.float32) + offset) * layer_step / self._img_shape[0]
             x_on_image = (tf.cast(x_on_layer, tf.float32) + offset) * layer_step / self._img_shape[1]
-
+            #计算featuremap上一个点的产生的anchor个数
             num_anchors_along_depth = len(anchor_scale) * len(anchor_ratio) + len(extra_anchor_scale)
+            #一张特征图拥有的特征点数
             num_anchors_along_spatial = layer_shape[1] * layer_shape[0]
 
             list_h_on_image = []
@@ -311,6 +317,7 @@ class AnchorCreator(object):
                 list_w_on_image.append(scale)
                 global_index += 1
             # for other aspect ratio anchors
+            #添加不同长宽比情况下的框的wh值
             for scale_index, scale in enumerate(anchor_scale):
                 for ratio_index, ratio in enumerate(anchor_ratio):
                     list_h_on_image.append(scale / math.sqrt(ratio))
@@ -322,7 +329,7 @@ class AnchorCreator(object):
             return tf.expand_dims(y_on_image, axis=-1), tf.expand_dims(x_on_image, axis=-1), \
                     tf.constant(list_h_on_image, dtype=tf.float32), \
                     tf.constant(list_w_on_image, dtype=tf.float32), num_anchors_along_depth, num_anchors_along_spatial
-
+    #计算所有特征层的anchor
     def get_all_anchors(self):
         all_anchors = []
         all_num_anchors_depth = []
