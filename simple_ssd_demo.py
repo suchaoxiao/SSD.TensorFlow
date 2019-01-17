@@ -63,7 +63,7 @@ tf.app.flags.DEFINE_string(
 
 FLAGS = tf.app.flags.FLAGS
 #CUDA_VISIBLE_DEVICES
-
+#获取checkpoint （保存的模型参数）
 def get_checkpoint():
     if tf.gfile.IsDirectory(FLAGS.checkpoint_path):
         checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
@@ -71,21 +71,23 @@ def get_checkpoint():
         checkpoint_path = FLAGS.checkpoint_path
 
     return checkpoint_path
-
+#定义选择bbox 的函数 用预测的得分，bbox的offset 和类别，阈值 选择bboxes
 def select_bboxes(scores_pred, bboxes_pred, num_classes, select_threshold):
     selected_bboxes = {}
     selected_scores = {}
     with tf.name_scope('select_bboxes', [scores_pred, bboxes_pred]):
-        for class_ind in range(1, num_classes):
+        for class_ind in range(1, num_classes): #对于numclass中的每个类别类别得分就是类别的预测分，
             class_scores = scores_pred[:, class_ind]
 
-            select_mask = class_scores > select_threshold
-            select_mask = tf.cast(select_mask, tf.float32)
+            select_mask = class_scores > select_threshold  #类别分大于阈值为true
+            select_mask = tf.cast(select_mask, tf.float32) #将true转成float形式
             selected_bboxes[class_ind] = tf.multiply(bboxes_pred, tf.expand_dims(select_mask, axis=-1))
+            #选择类别得分大于阈值的框
+            #选择类别得分大于阈值的类别
             selected_scores[class_ind] = tf.multiply(class_scores, select_mask)
 
     return selected_bboxes, selected_scores
-
+#切割 bbox 在归一化的【0，1】区间选择 返回左上，右下的坐标
 def clip_bboxes(ymin, xmin, ymax, xmax, name):
     with tf.name_scope(name, 'clip_bboxes', [ymin, xmin, ymax, xmax]):
         ymin = tf.maximum(ymin, 0.)
@@ -97,31 +99,34 @@ def clip_bboxes(ymin, xmin, ymax, xmax, name):
         xmin = tf.minimum(xmin, xmax)
 
         return ymin, xmin, ymax, xmax
-
+#过滤bbox
 def filter_bboxes(scores_pred, ymin, xmin, ymax, xmax, min_size, name):
     with tf.name_scope(name, 'filter_bboxes', [scores_pred, ymin, xmin, ymax, xmax]):
+        #计算宽高
         width = xmax - xmin
         height = ymax - ymin
-
+        #只要宽高都大于最小值的bbox和得分  结果 是true和false
         filter_mask = tf.logical_and(width > min_size, height > min_size)
 
-        filter_mask = tf.cast(filter_mask, tf.float32)
+        filter_mask = tf.cast(filter_mask, tf.float32) #转成0/1
+        #返回过滤后的坐标和得分
         return tf.multiply(ymin, filter_mask), tf.multiply(xmin, filter_mask), \
                 tf.multiply(ymax, filter_mask), tf.multiply(xmax, filter_mask), tf.multiply(scores_pred, filter_mask)
-
+#对bbox排序
 def sort_bboxes(scores_pred, ymin, xmin, ymax, xmax, keep_topk, name):
     with tf.name_scope(name, 'sort_bboxes', [scores_pred, ymin, xmin, ymax, xmax]):
-        cur_bboxes = tf.shape(scores_pred)[0]
+        cur_bboxes = tf.shape(scores_pred)[0]  #现在又的bbox数量
         scores, idxes = tf.nn.top_k(scores_pred, k=tf.minimum(keep_topk, cur_bboxes), sorted=True)
-
+        #按得分大小排序，选出前k个 得分，并且记录序号
+        #依据得分的序号，选出前k个 的bbox坐标
         ymin, xmin, ymax, xmax = tf.gather(ymin, idxes), tf.gather(xmin, idxes), tf.gather(ymax, idxes), tf.gather(xmax, idxes)
-
+        #如果现有的bbox数量比要求的k个小，就补零
         paddings_scores = tf.expand_dims(tf.stack([0, tf.maximum(keep_topk-cur_bboxes, 0)], axis=0), axis=0)
 
         return tf.pad(ymin, paddings_scores, "CONSTANT"), tf.pad(xmin, paddings_scores, "CONSTANT"),\
                 tf.pad(ymax, paddings_scores, "CONSTANT"), tf.pad(xmax, paddings_scores, "CONSTANT"),\
                 tf.pad(scores, paddings_scores, "CONSTANT")
-
+#定义利用nms 非极大值抑制 进行重叠框抑制
 def nms_bboxes(scores_pred, bboxes_pred, nms_topk, nms_threshold, name):
     with tf.name_scope(name, 'nms_bboxes', [scores_pred, bboxes_pred]):
         idxes = tf.image.non_max_suppression(bboxes_pred, scores_pred, nms_topk, nms_threshold)
@@ -129,7 +134,7 @@ def nms_bboxes(scores_pred, bboxes_pred, nms_topk, nms_threshold, name):
 
 def parse_by_class(cls_pred, bboxes_pred, num_classes, select_threshold, min_size, keep_topk, nms_topk, nms_threshold):
     with tf.name_scope('select_bboxes', [cls_pred, bboxes_pred]):
-        scores_pred = tf.nn.softmax(cls_pred)
+        scores_pred = tf.nn.softmax(cls_pred)#从类别预测 softmax 多分类得到得分预测？
         selected_bboxes, selected_scores = select_bboxes(scores_pred, bboxes_pred, num_classes, select_threshold)
         for class_ind in range(1, num_classes):
             ymin, xmin, ymax, xmax = tf.unstack(selected_bboxes[class_ind], 4, axis=-1)
@@ -150,10 +155,10 @@ def main(_):
 
         image_input = tf.placeholder(tf.uint8, shape=(None, None, 3))
         shape_input = tf.placeholder(tf.int32, shape=(2,))
-
+        #放回处理后的图像
         features = ssd_preprocessing.preprocess_for_eval(image_input, out_shape, data_format=FLAGS.data_format, output_rgb=False)
         features = tf.expand_dims(features, axis=0)
-
+        #anchor的产生
         anchor_creator = anchor_manipulator.AnchorCreator(out_shape,
                                                     layers_shapes = [(38, 38), (19, 19), (10, 10), (5, 5), (3, 3), (1, 1)],
                                                     anchor_scales = [(0.1,), (0.2,), (0.375,), (0.55,), (0.725,), (0.9,)],

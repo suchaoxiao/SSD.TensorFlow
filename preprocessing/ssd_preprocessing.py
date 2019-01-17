@@ -374,7 +374,7 @@ def ssd_random_sample_patch_wrapper(image, labels, bboxes):
     return tf.cond(tf.less(index, max_attempt),
                 lambda : (image, labels, bboxes),
                 lambda : (orgi_image, orgi_labels, orgi_bboxes))
-
+#减去通道平均值
 def _mean_image_subtraction(image, means):
   """Subtracts the given means from each image channel.
 
@@ -476,7 +476,7 @@ def preprocess_for_train(image, labels, bboxes, out_shape, data_format='channels
     if data_format == 'channels_first':
       final_image = tf.transpose(final_image, perm=(2, 0, 1))
     return final_image, labels, bboxes
-
+#预处理数据进行模型验证
 def preprocess_for_eval(image, out_shape, data_format='channels_first', scope='ssd_preprocessing_eval', output_rgb=True):
   """Preprocesses the given image for evaluation.
 
@@ -488,11 +488,12 @@ def preprocess_for_eval(image, out_shape, data_format='channels_first', scope='s
     A preprocessed image.
   """
   with tf.name_scope(scope, 'ssd_preprocessing_eval', [image]):
-    image = tf.to_float(image)
+    image = tf.to_float(image) #转float
+    #用双线性变换改变图像大小
     image = tf.image.resize_images(image, out_shape, method=tf.image.ResizeMethod.BILINEAR, align_corners=False)
     image.set_shape(out_shape + [3])
 
-    image = _mean_image_subtraction(image, [_R_MEAN, _G_MEAN, _B_MEAN])
+    image = _mean_image_subtraction(image, [_R_MEAN, _G_MEAN, _B_MEAN]) #图像减去均值
     if not output_rgb:
       image_channels = tf.unstack(image, axis=-1, name='split_rgb')
       image = tf.stack([image_channels[2], image_channels[1], image_channels[0]], axis=-1, name='merge_bgr')
@@ -500,7 +501,7 @@ def preprocess_for_eval(image, out_shape, data_format='channels_first', scope='s
     if data_format == 'channels_first':
       image = tf.transpose(image, perm=(2, 0, 1))
     return image
-
+#定义图片预处理模块 如果是训练就调用训练的预处理，测试就用测试的预处理
 def preprocess_image(image, labels, bboxes, out_shape, is_training=False, data_format='channels_first', output_rgb=True):
   """Preprocesses the given image.
 

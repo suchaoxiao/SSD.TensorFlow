@@ -256,13 +256,21 @@ class AnchorEncoder(object):
             pred_cx = pred_location[:, 1] * self._prior_scaling[1] * anchor_w + anchor_cx
 
             return tf.split(tf.stack(self.center2point(pred_cy, pred_cx, pred_h, pred_w), axis=-1), num_anchors_per_layer, axis=0)
+#定义产生anchor 的类
+'''
+layers_shapes = [(38, 38), (19, 19), (10, 10), (5, 5), (3, 3), (1, 1)],
+anchor_scales = [(0.1,), (0.2,), (0.375,), (0.55,), (0.725,), (0.9,)],
+extra_anchor_scales = [(0.1414,), (0.2739,), (0.4541,), (0.6315,), (0.8078,), (0.9836,)],
+anchor_ratios = [(1., 2., .5), (1., 2., 3., .5, 0.3333), (1., 2., 3., .5, 0.3333), (1., 2., 3., .5, 0.3333), (1., 2., .5), (1., 2., .5)],
+layer_steps = [8, 16, 32, 64, 100, 300])
+'''
 
 class AnchorCreator(object):
     def __init__(self, img_shape, layers_shapes, anchor_scales, extra_anchor_scales, anchor_ratios, layer_steps):
         super(AnchorCreator, self).__init__()
         # img_shape -> (height, width)
         self._img_shape = img_shape
-        self._layers_shapes = layers_shapes
+        self._layers_shapes = layers_shapes  #fatgure map
         self._anchor_scales = anchor_scales
         self._extra_anchor_scales = extra_anchor_scales
         self._anchor_ratios = anchor_ratios
